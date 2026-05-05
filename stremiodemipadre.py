@@ -1,6 +1,7 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
+import streamlit.components.v1 as components
 
 
 st.set_page_config(page_title="Eliggi Stremio", page_icon="🍿", layout="wide")
@@ -103,5 +104,18 @@ else:
             url_reproducir = df_fuentes.loc[opciones_fuente == fuente_elegida, 'url_video'].values[0]
             
             # Encendemos el reproductor nativo
-            st.video(url_reproducir)
-            st.caption(f"Transmitiendo mágicamente desde: {url_reproducir}")
+            # ... (código anterior) ...
+        if df_fuentes.empty:
+            st.warning("Aún no hay enlaces de video disponibles para este título.")
+        else:
+            opciones_fuente = df_fuentes['calidad'] + " - " + df_fuentes['tipo']
+            fuente_elegida = st.selectbox("Selecciona un servidor:", opciones_fuente)
+            
+            # Filtramos la URL exacta (Ej: https://embed69.org/f/tt8516554-1x01/)
+            url_reproducir = df_fuentes.loc[opciones_fuente == fuente_elegida, 'url_video'].values[0]
+            
+            # 🔥 LA MAGIA DEL IFRAME EXTERNO 🔥
+            # En lugar de st.video(), inyectamos el reproductor incrustado
+            components.iframe(url_reproducir, height=500, scrolling=False)
+            
+            st.caption(f"Transmitiendo servidor externo: {url_reproducir}")
