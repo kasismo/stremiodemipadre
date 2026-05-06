@@ -2,3 +2,5 @@ streamlit
 pandas
 sqlalchemy
 libtorrent
+google.generativeai
+json
