@@ -1,121 +1,74 @@
 import streamlit as st
-from sqlalchemy import create_engine, text
-import pandas as pd
-import streamlit.components.v1 as components
+import libtorrent as lt
+import time
+import google.generativeai as genai
+import json
 
+# ===================================
+# 1. MOTOR TORRENT: OBTENER METADATA
+# ===================================
+def obtener_archivos_del_maget(maget_link):
+    """Se conecta a la red P2P para descubrir qué hay dentro del Maget."""
+    sesion = lt.session()
+    params = lt.parse_marget_uri(magnet_link)
+    handle = sesion.add_torrent(params)
 
-st.set_page_config(page_title="Eliggi Stremio", page_icon="🍿", layout="wide")
+    with st.spinner("Conectando a la red Torrent (buscando pares)..."):
+        # Esperamos a que se descargue la metadata (la lista de archivos)
+        while not handle.has_metadata():
+            time.sleep(1)
 
-# ==========================================
-# --- 1. MEMORIA Y ESTADO ---
-# ==========================================
-# Aquí guardamos qué película está viendo el usuario para no perderla al recargar
-if 'pelicula_seleccionada' not in st.session_state:
-    st.session_state['pelicula_seleccionada'] = None
+        info = handle.get_torrent_info()
+        archivos_crudos = [info.files().file_path(i) for i in range(info.files().num_files())]
 
-# ==========================================
-# --- 2. CONEXIÓN A LA BÓVEDA (SUPABASE) ---
-# ==========================================
-@st.cache_resource
-def iniciar_conexion():
-    """Conecta a la base de datos una sola vez para máxima velocidad."""
-    return create_engine("DB_URI")
-
-motor = iniciar_conexion()
-
-def obtener_catalogo():
-    """Trae toda la cartelera."""
-    query = text("SELECT id, titulo, sinopsis, poster_url FROM contenido")
-    with motor.connect()as conexion:
-        return pd.read_sql(query, conexion)
+        # Filtramos solo los que son videos
+        videos = [f for f in archivos_crudos if f.endswith(('.mp4', '.mkv', '.avi'))]
+        return videos
     
-def obtener_fuentes(contenido_id):
-    """Busca los 'links' exactos que coincidan con la película seleccionada."""
-    query = text("SELECT, calidad, tipo, url_video FROM fuentes WHERE contenido_id = :id")
-    with motor.connect() as conexion:
-        return pd.read_sql(query, conexion, params={"id": contenido_id})
+# ===================================
+# 2. CEREBRO IA: LIMPIAR Y ESTRUCTURAR
+# ===================================
+@st.cache_data
+def estructurar_capitulos_con_ia(lista_videos_crudos):
+    """Usa GenAI para leer los nombres sucios de los archivos y ordenarlos."""
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    modelo = genai.GenerativeModel('gemini-2.5-pro')
 
-# ==========================================
-# --- 3. INTERFAZ GRÁFICA (EL FRONTEND) ---
-# ==========================================
-st.title("🍿 Eliggi Nuestro Stremio")
-# ---> VISTA A: EL CATÁLOGO <---
-if st.session_state['pelicula_seleccionada'] is None:
-    st.subheader("Catálogo Disponible")
-    
-    try:
-        df_catalogo = obtener_catalogo()
-        
-        if df_catalogo.empty:
-            st.info("La base de datos está vacía. Añade tu primera película en Supabase.")
-        else:
-            # Creamos una cuadrícula dinámica (4 pósters por fila)
-            columnas_por_fila = 4
-            filas = [st.columns(columnas_por_fila) for _ in range((len(df_catalogo) // columnas_por_fila) + 1)]
-            
-            for index, fila in df_catalogo.iterrows():
-                col = filas[index // columnas_por_fila][index % columnas_por_fila]
-                with col:
-                    # Dibujamos el póster y el título
-                    st.image(fila['poster_url'], use_container_width=True)
-                    st.markdown(f"**{fila['titulo']}**")
-                    
-                    # El botón mágico que cambia la vista
-                    if st.button("▶️ Reproducir", key=f"btn_{fila['id']}", use_container_width=True):
-                        st.session_state['pelicula_seleccionada'] = fila.to_dict()
-                        st.rerun()
-                        
-    except Exception as e:
-        st.error(f"Error conectando a la base de datos: {e}")
+    prompt = f"""
+    Tengo esta lista de archivos sacados de un Torrent: {lista_videos_crudos}.
+    Analiza los nombres. Detecta el número de episodio de cada uno.
+    Devuelve estrictamente un arreglo JSON con el formato:
+    [{{"Episodio": 1, nombre_limpio: "Episodio 1", "archivo_original": "nombre_crudo.mp4"}}]
+    """
+respuesta = modelo.generate_content(prompt)
 
-# ---> VISTA B: LA SALA DE CINE <---
-else:
-    peli = st.session_state['pelicula_seleccionada']
-    
-    # Botón de escape
-    if st.button("⬅️ Volver al Catálogo"):
-        st.session_state['pelicula_seleccionada'] = None
-        st.rerun()
-        
-    st.divider()
-    
-    # Dividimos la pantalla: Izquierda info, Derecha video
-    col_info, col_video = st.columns([1, 2])
-    
-    with col_info:
-        st.image(peli['poster_url'], use_container_width=True)
-        st.title(peli['titulo'])
-        st.write(peli['sinopsis'])
-        
-    with col_video:
-        st.subheader("Reproductor")
-        
-        # Consultamos a los "Addons" (Nuestra tabla de fuentes)
-        df_fuentes = obtener_fuentes(peli['id'])
-        
-        if df_fuentes.empty:
-            st.warning("Aún no hay enlaces de video disponibles para este título.")
-        else:
-            # Simulamos el selector de servidores de Stremio
-            opciones_fuente = df_fuentes['calidad'] + " - " + df_fuentes['tipo']
-            fuente_elegida = st.selectbox("Selecciona un servidor:", opciones_fuente)
-            
-            # Filtramos la URL exacta según lo que eligió el usuario
-            url_reproducir = df_fuentes.loc[opciones_fuente == fuente_elegida, 'url_video'].values[0]
-            
-            # Encendemos el reproductor nativo
-            # ... (código anterior) ...
-        if df_fuentes.empty:
-            st.warning("Aún no hay enlaces de video disponibles para este título.")
-        else:
-            opciones_fuente = df_fuentes['calidad'] + " - " + df_fuentes['tipo']
-            fuente_elegida = st.selectbox("Selecciona un servidor:", opciones_fuente)
-            
-            # Filtramos la URL exacta (Ej: https://embed69.org/f/tt8516554-1x01/)
-            url_reproducir = df_fuentes.loc[opciones_fuente == fuente_elegida, 'url_video'].values[0]
-            
-            # 🔥 LA MAGIA DEL IFRAME EXTERNO 🔥
-            # En lugar de st.video(), inyectamos el reproductor incrustado
-            components.iframe(url_reproducir, height=500, scrolling=False)
-            
-            st.caption(f"Transmitiendo servidor externo: {url_reproducir}")
+# Limpiamos el texto para sacar solo el JSON
+txt = respuesta.text.replace('```json', '').replace('```', '').strip()
+
+
+# ===================================
+# 3. INTERFAZ STREAMLIT
+# ===================================
+st.title("🍿 Stremio de Eliggi Engine (P2P)")
+magnet_input = st.text_input("Pega el enlace Magnet aquí:")
+
+if magnet_input:
+    # Paso 1: Usar libtorrent para ver qué hay adentro
+    videos_crudos = obtener_archivos_del_magnet(magnet_input)
+
+    if videos_crudos:
+        # Paso 2: Usar IA para organizar la interfaz
+        capitulos = estructurar_capitulos_con_ia(videos_crudos)
+
+        st.success(f"¡Se encontraros {len(capitulos)} capítulos!")
+
+        # Generamos los botones dinámicamente
+        for cap in capitulos:
+            col1, col2 = st.columns([3, 1])
+            col1.markdown(f"**{cap['nombre_limpio']}**")
+
+            if col2.button("▶️ Cargar", key=cap['episodio']):
+                st.info("Iniciando descarga y reproducción...")
+                # Aquí iría la lógica de streaming
+                # Tendríamos que iniciar un servidor Flask/FastAPI en segundo plano
+                # que sirva el archivo que libtorrent está descargando.
