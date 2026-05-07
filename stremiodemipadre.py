@@ -1,74 +1,123 @@
 import streamlit as st
-import libtorrent as lt
-import time
 import google.generativeai as genai
+import libtorrent as lt
 import json
+import time
 
-# ===================================
-# 1. MOTOR TORRENT: OBTENER METADATA
-# ===================================
-def obtener_archivos_del_maget(maget_link):
-    """Se conecta a la red P2P para descubrir qué hay dentro del Maget."""
+st.set_page_config(page_title="Eliggi Stremio P2P", page_icon="🍿", layout="wide")
+
+# ==========================================
+# --- 1. CONFIGURACIÓN Y ESTADO ---
+# ==========================================
+genai.configure(api_key="TU_API_KEY_DE_GEMINI") # <--- PON TU CLAVE AQUÍ
+
+if 'catalogo_magnet' not in st.session_state:
+    st.session_state['catalogo_magnet'] = None
+if 'episodio_actual' not in st.session_state:
+    st.session_state['episodio_actual'] = None
+
+# ==========================================
+# --- 2. HERRAMIENTAS DEL BACKEND ---
+# ==========================================
+def extraer_metadata_torrent(magnet_link):
+    """Se conecta a la red P2P solo para leer qué archivos contiene el enlace."""
     sesion = lt.session()
-    params = lt.parse_marget_uri(magnet_link)
-    handle = sesion.add_torrent(params)
-
-    with st.spinner("Conectando a la red Torrent (buscando pares)..."):
-        # Esperamos a que se descargue la metadata (la lista de archivos)
-        while not handle.has_metadata():
-            time.sleep(1)
-
-        info = handle.get_torrent_info()
-        archivos_crudos = [info.files().file_path(i) for i in range(info.files().num_files())]
-
-        # Filtramos solo los que son videos
-        videos = [f for f in archivos_crudos if f.endswith(('.mp4', '.mkv', '.avi'))]
-        return videos
+    sesion.listen_on(6881, 6891)
+    params = lt.parse_magnet_uri(magnet_link)
+    params.save_path = "."
     
-# ===================================
-# 2. CEREBRO IA: LIMPIAR Y ESTRUCTURAR
-# ===================================
-@st.cache_data
-def estructurar_capitulos_con_ia(lista_videos_crudos):
-    """Usa GenAI para leer los nombres sucios de los archivos y ordenarlos."""
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo = genai.GenerativeModel('gemini-2.5-pro')
+    handle = sesion.add_torrent(params)
+    
+    intentos = 0
+    # Esperamos a que los 'peers' nos den el índice del archivo
+    while not handle.has_metadata():
+        time.sleep(1)
+        intentos += 1
+        if intentos > 45: # Timeout de 45 segundos
+            return None
+            
+    info = handle.get_torrent_info()
+    archivos = [info.files().file_path(i) for i in range(info.files().num_files())]
+    # Filtramos la basura (archivos .txt, .nfo) y dejamos solo video
+    return [f for f in archivos if f.lower().endswith(('.mp4', '.mkv', '.avi'))]
 
+def procesar_con_ia(lista_archivos):
+    """Gemini lee los nombres crudos y devuelve una estructura perfecta para la UI."""
+    modelo = genai.GenerativeModel('gemini-2.5-flash')
     prompt = f"""
-    Tengo esta lista de archivos sacados de un Torrent: {lista_videos_crudos}.
-    Analiza los nombres. Detecta el número de episodio de cada uno.
-    Devuelve estrictamente un arreglo JSON con el formato:
-    [{{"Episodio": 1, nombre_limpio: "Episodio 1", "archivo_original": "nombre_crudo.mp4"}}]
+    Eres el backend de una app de streaming. Extrae la información de esta lista cruda: {lista_archivos}
+    Devuelve ÚNICAMENTE un array JSON válido con este formato exacto:
+    [
+        {{"episodio": 1, "titulo": "Episodio 1", "archivo_crudo": "ruta_original.mp4"}}
+    ]
+    Ordena los episodios de menor a mayor. Si es una película, pon "episodio": 1.
     """
-respuesta = modelo.generate_content(prompt)
+    try:
+        respuesta = modelo.generate_content(prompt)
+        txt = respuesta.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(txt)
+    except:
+        return None
 
-# Limpiamos el texto para sacar solo el JSON
-txt = respuesta.text.replace('```json', '').replace('```', '').strip()
+# ==========================================
+# --- 3. INTERFAZ DE USUARIO ---
+# ==========================================
+st.title("🍿 Eliggi Stremio (Motor P2P)")
+st.markdown("Pega un enlace Magnet. La IA lo auditará y preparará el servidor de streaming local.")
 
+# BARRA DE BÚSQUEDA MAGNET
+magnet_input = st.text_input("🔗 Enlace Magnet:", placeholder="magnet:?xt=urn:btih:...")
 
-# ===================================
-# 3. INTERFAZ STREAMLIT
-# ===================================
-st.title("🍿 Stremio de Eliggi Engine (P2P)")
-magnet_input = st.text_input("Pega el enlace Magnet aquí:")
+if st.button("🔍 Auditar Enlace", type="primary"):
+    if magnet_input:
+        with st.spinner("Conectando a la red Torrent mundial... (Esto puede tardar según los seeds)"):
+            archivos_crudos = extraer_metadata_torrent(magnet_input)
+            
+        if archivos_crudos:
+            with st.spinner("🧠 Gemini está estructurando los capítulos..."):
+                catalogo_limpio = procesar_con_ia(archivos_crudos)
+                
+            if catalogo_limpio:
+                st.session_state['catalogo_magnet'] = catalogo_limpio
+                st.session_state['episodio_actual'] = None
+                st.success("✅ ¡Enlace procesado con éxito!")
+            else:
+                st.error("La IA no pudo procesar los nombres de los archivos.")
+        else:
+            st.error("No se encontró metadata. El enlace puede estar muerto o no tener 'seeds'.")
 
-if magnet_input:
-    # Paso 1: Usar libtorrent para ver qué hay adentro
-    videos_crudos = obtener_archivos_del_magnet(magnet_input)
+st.divider()
 
-    if videos_crudos:
-        # Paso 2: Usar IA para organizar la interfaz
-        capitulos = estructurar_capitulos_con_ia(videos_crudos)
-
-        st.success(f"¡Se encontraros {len(capitulos)} capítulos!")
-
-        # Generamos los botones dinámicamente
-        for cap in capitulos:
-            col1, col2 = st.columns([3, 1])
-            col1.markdown(f"**{cap['nombre_limpio']}**")
-
-            if col2.button("▶️ Cargar", key=cap['episodio']):
-                st.info("Iniciando descarga y reproducción...")
-                # Aquí iría la lógica de streaming
-                # Tendríamos que iniciar un servidor Flask/FastAPI en segundo plano
-                # que sirva el archivo que libtorrent está descargando.
+# RENDERIZADO DEL CATÁLOGO
+if st.session_state['catalogo_magnet']:
+    col_menu, col_reproductor = st.columns([1, 2])
+    
+    # Menú lateral con los botones de episodios
+    with col_menu:
+        st.subheader("📑 Capítulos")
+        for cap in st.session_state['catalogo_magnet']:
+            # Streamlit dibuja un botón por cada capítulo que detectó la IA
+            if st.button(f"▶️ {cap['titulo']}", key=f"btn_{cap['episodio']}", use_container_width=True):
+                st.session_state['episodio_actual'] = cap
+                
+    # Zona del Reproductor
+    with col_reproductor:
+        if st.session_state['episodio_actual']:
+            cap_actual = st.session_state['episodio_actual']
+            st.subheader(f"Reproduciendo: {cap_actual['titulo']}")
+            
+            st.info(f"Archivo interno: `{cap_actual['archivo_crudo']}`")
+            
+            # 🔥 LA CONEXIÓN CON TU MOTOR FASTAPI LOCAL 🔥
+            # Aquí asumimos que tu FastAPI (main.py) está corriendo en el puerto 8000
+            # Le pasamos el nombre del archivo como parámetro para que sepa qué streamear
+            url_stream_local = f"http://localhost:8000/stream?file={cap_actual['archivo_crudo']}"
+            
+            # Encerramos en un try/except por si el motor de FastAPI está apagado
+            try:
+                st.video(url_stream_local)
+                st.caption("⚡ Streaming impulsado por FastAPI y HTTP 206")
+            except:
+                st.warning("⚠️ No se puede cargar el video. ¿Está encendido el servidor FastAPI en el puerto 8000?")
+        else:
+            st.info("👈 Selecciona un capítulo para iniciar la transmisión local.")
