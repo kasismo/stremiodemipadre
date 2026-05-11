@@ -1,5 +1,3 @@
-streamlit
-sqlalchemy
-libtorrent
-google.generativeai
-json
+fastapi
+uvicorn
+httpx
