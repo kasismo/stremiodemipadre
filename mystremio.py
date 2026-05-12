@@ -25,8 +25,7 @@ async def stream_video(video_id: str, request: Request):
     # 3. Nos conectamos a Google Drive pasándole el rango solicitado
     # Usamos un cliente asincrónico para no bloquear el servidor
     # El Timeout(None) le dice a Python que mantenga la conexión viva el tiempo que haga falta
-    # El timeout=None desactiva el límite de tiempo, esperando lo que sea necesario
-    client = httpx.AsyncClient(timeout=None)
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
     
     # Hacemos la petición a Google (stream=True es la clave para no descargar todo de golpe)
     req = client.build_request("GET", drive_url, headers=headers)
