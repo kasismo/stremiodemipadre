@@ -5,7 +5,7 @@ import httpx
 app = FastAPI()
 
 # TU LLAVE DE GOOGLE ACA
-GOOGLE_API_KEY = "AIzaSyDc2SOs8D3v8lnq9120JdFX6LDpgnhOBaw"
+GOOGLE_API_KEY = "AIzaSyAULjBpVODNPLgkP547iETBPQyTbusuMxI"
 
 @app.get("/")
 async def home():
