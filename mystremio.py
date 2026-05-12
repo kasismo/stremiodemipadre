@@ -20,11 +20,12 @@ async def stream_video(video_id: str, request: Request):
     headers = {}
     range_header = request.headers.get("Range")
     if range_header:
-        headers["Range"] = range_header
+        headers["Range"] = range_header # Pasamos la petición de ExoPlayer intacta a Drive
 
     # 3. Nos conectamos a Google Drive pasándole el rango solicitado
     # Usamos un cliente asincrónico para no bloquear el servidor
-    client = httpx.AsyncClient()
+    # El Timeout(None) le dice a Python que mantenga la conexión viva el tiempo que haga falta
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
     
     # Hacemos la petición a Google (stream=True es la clave para no descargar todo de golpe)
     req = client.build_request("GET", drive_url, headers=headers)
