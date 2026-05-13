@@ -32,23 +32,37 @@ async def stream_video(video_id: str, request: Request):
         await client.aclose()
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-    if response.status_code not in (200, 206):
+   if response.status_code not in (200, 206):
         await response.aclose()
         await client.aclose()
         raise HTTPException(status_code=response.status_code, detail="Google Drive bloqueó la petición")
 
-    # 3. El generador que escupe los bytes a la televisión
-    async def video_streamer():
-        try:
-            async for chunk in response.aiter_bytes(chunk_size=1024 * 1024): # Pedazos de 1MB
-                yield chunk
-        finally:
-            # 4. CRUCIAL: Cuando la tele deja de pedir video, cerramos todo para liberar memoria RAM
-            await response.aclose()
-            await client.aclose()
+        # ---------------------------------------------------------
+        # LA SOLUCIÓN: El Filtro estricto de cabeceras para ExoPlayer
+        # ---------------------------------------------------------
+        clean_headers = {}
+        
+        # Solo dejamos pasar estos 4 datos vitales. Todo lo demás se descarta.
+        for header_name in ["Content-Length", "Content-Range", "Content-Type"]:
+            # httpx guarda las cabeceras en minúscula internamente
+            if header_name.lower() in response.headers:
+                clean_headers[header_name] = response.headers[header_name.lower()]
+                
+        # Le gritamos a la tele que SÍ soportamos que adelante y atrase la película
+        clean_headers["Accept-Ranges"] = "bytes"
 
-    return StreamingResponse(
-        video_streamer(),
-        status_code=response.status_code,
-        headers=dict(response.headers)
-    )
+        # 3. El generador que escupe los bytes
+        async def video_streamer():
+            try:
+                async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                    yield chunk
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        # Pasamos clean_headers en lugar del dict() entero
+        return StreamingResponse(
+            video_streamer(),
+            status_code=response.status_code,
+            headers=clean_headers
+        )
