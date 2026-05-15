@@ -13,7 +13,8 @@ async def home():
 @app.get("/stream/{video_id}")
 async def stream_video(video_id: str):
     # Armamos el link directo al CDN de Google Drive
-    drive_url = f"https://www.googleapis.com/drive/v3/files/{video_id}?alt=media&key={GOOGLE_API_KEY}"
+   # Le agregamos el "&acknowledgeAbuse=true" al final del link
+    drive_url = f"https://www.googleapis.com/drive/v3/files/{video_id}?alt=media&key={GOOGLE_API_KEY}&acknowledgeAbuse=true"
     
     # El Redireccionamiento: Le pasamos la carga pesada a los servidores de Google
     return RedirectResponse(url=drive_url, status_code=307)
