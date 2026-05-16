@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 app = FastAPI()
 
 # TU LLAVE DE GOOGLE ACA
-GOOGLE_API_KEY = "AIzaSyCfyGe49cwwYpx61yWTTKWLT7ceNb3CbxI"
+GOOGLE_API_KEY = "AIzaSyAE2Wx6x8JbUJhdHXVQe7-pp7wmj4i_frE"
 
 @app.get("/")
 async def home():
